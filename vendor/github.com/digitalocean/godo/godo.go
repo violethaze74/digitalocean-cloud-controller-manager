@@ -16,12 +16,13 @@ import (
 	"time"
 
 	"github.com/google/go-querystring/query"
+	"github.com/hashicorp/go-retryablehttp"
 	"golang.org/x/oauth2"
 	"golang.org/x/time/rate"
 )
 
 const (
-	libraryVersion = "1.89.0"
+	libraryVersion = "1.101.0"
 	defaultBaseURL = "https://api.digitalocean.com/"
 	userAgent      = "godo/" + libraryVersion
 	mediaType      = "application/json"
@@ -54,33 +55,35 @@ type Client struct {
 	Balance           BalanceService
 	BillingHistory    BillingHistoryService
 	CDNs              CDNService
+	Certificates      CertificatesService
+	Databases         DatabasesService
 	Domains           DomainsService
 	Droplets          DropletsService
 	DropletActions    DropletActionsService
+	Firewalls         FirewallsService
+	FloatingIPs       FloatingIPsService
+	FloatingIPActions FloatingIPActionsService
+	Functions         FunctionsService
 	Images            ImagesService
 	ImageActions      ImageActionsService
 	Invoices          InvoicesService
 	Keys              KeysService
+	Kubernetes        KubernetesService
+	LoadBalancers     LoadBalancersService
+	Monitoring        MonitoringService
+	OneClick          OneClickService
+	Projects          ProjectsService
 	Regions           RegionsService
-	Sizes             SizesService
-	FloatingIPs       FloatingIPsService
-	FloatingIPActions FloatingIPActionsService
+	Registry          RegistryService
 	ReservedIPs       ReservedIPsService
 	ReservedIPActions ReservedIPActionsService
+	Sizes             SizesService
 	Snapshots         SnapshotsService
 	Storage           StorageService
 	StorageActions    StorageActionsService
 	Tags              TagsService
-	LoadBalancers     LoadBalancersService
-	Certificates      CertificatesService
-	Firewalls         FirewallsService
-	Projects          ProjectsService
-	Kubernetes        KubernetesService
-	Registry          RegistryService
-	Databases         DatabasesService
+	UptimeChecks      UptimeChecksService
 	VPCs              VPCsService
-	OneClick          OneClickService
-	Monitoring        MonitoringService
 
 	// Optional function called after every successful request made to the DO APIs
 	onRequestCompleted RequestCompletionCallback
@@ -90,6 +93,29 @@ type Client struct {
 
 	// Optional rate limiter to ensure QoS.
 	rateLimiter *rate.Limiter
+
+	// Optional retry values. Setting the RetryConfig.RetryMax value enables automatically retrying requests
+	// that fail with 429 or 500-level response codes using the go-retryablehttp client
+	RetryConfig RetryConfig
+}
+
+// RetryConfig sets the values used for enabling retries and backoffs for
+// requests that fail with 429 or 500-level response codes using the go-retryablehttp client.
+// RetryConfig.RetryMax must be configured to enable this behavior. RetryConfig.RetryWaitMin and
+// RetryConfig.RetryWaitMax are optional, with the default values being 1.0 and 30.0, respectively.
+//
+// You can use
+//
+//	godo.PtrTo(1.0)
+//
+// to explicitly set the RetryWaitMin and RetryWaitMax values.
+//
+// Note: Opting to use the go-retryablehttp client will overwrite any custom HTTP client passed into New().
+// Only the custom HTTP client's custom transport and timeout will be maintained.
+type RetryConfig struct {
+	RetryMax     int
+	RetryWaitMin *float64 // Minimum time to wait
+	RetryWaitMax *float64 // Maximum time to wait
 }
 
 // RequestCompletionCallback defines the type of the request callback function
@@ -215,6 +241,7 @@ func NewClient(httpClient *http.Client) *Client {
 	baseURL, _ := url.Parse(defaultBaseURL)
 
 	c := &Client{client: httpClient, BaseURL: baseURL, UserAgent: userAgent}
+
 	c.Account = &AccountServiceOp{client: c}
 	c.Actions = &ActionsServiceOp{client: c}
 	c.Apps = &AppsServiceOp{client: c}
@@ -222,32 +249,34 @@ func NewClient(httpClient *http.Client) *Client {
 	c.BillingHistory = &BillingHistoryServiceOp{client: c}
 	c.CDNs = &CDNServiceOp{client: c}
 	c.Certificates = &CertificatesServiceOp{client: c}
+	c.Databases = &DatabasesServiceOp{client: c}
 	c.Domains = &DomainsServiceOp{client: c}
 	c.Droplets = &DropletsServiceOp{client: c}
 	c.DropletActions = &DropletActionsServiceOp{client: c}
 	c.Firewalls = &FirewallsServiceOp{client: c}
 	c.FloatingIPs = &FloatingIPsServiceOp{client: c}
 	c.FloatingIPActions = &FloatingIPActionsServiceOp{client: c}
-	c.ReservedIPs = &ReservedIPsServiceOp{client: c}
-	c.ReservedIPActions = &ReservedIPActionsServiceOp{client: c}
+	c.Functions = &FunctionsServiceOp{client: c}
 	c.Images = &ImagesServiceOp{client: c}
 	c.ImageActions = &ImageActionsServiceOp{client: c}
 	c.Invoices = &InvoicesServiceOp{client: c}
 	c.Keys = &KeysServiceOp{client: c}
+	c.Kubernetes = &KubernetesServiceOp{client: c}
 	c.LoadBalancers = &LoadBalancersServiceOp{client: c}
+	c.Monitoring = &MonitoringServiceOp{client: c}
+	c.OneClick = &OneClickServiceOp{client: c}
 	c.Projects = &ProjectsServiceOp{client: c}
 	c.Regions = &RegionsServiceOp{client: c}
+	c.Registry = &RegistryServiceOp{client: c}
+	c.ReservedIPs = &ReservedIPsServiceOp{client: c}
+	c.ReservedIPActions = &ReservedIPActionsServiceOp{client: c}
 	c.Sizes = &SizesServiceOp{client: c}
 	c.Snapshots = &SnapshotsServiceOp{client: c}
 	c.Storage = &StorageServiceOp{client: c}
 	c.StorageActions = &StorageActionsServiceOp{client: c}
 	c.Tags = &TagsServiceOp{client: c}
-	c.Kubernetes = &KubernetesServiceOp{client: c}
-	c.Registry = &RegistryServiceOp{client: c}
-	c.Databases = &DatabasesServiceOp{client: c}
+	c.UptimeChecks = &UptimeChecksServiceOp{client: c}
 	c.VPCs = &VPCsServiceOp{client: c}
-	c.OneClick = &OneClickServiceOp{client: c}
-	c.Monitoring = &MonitoringServiceOp{client: c}
 
 	c.headers = make(map[string]string)
 
@@ -264,6 +293,33 @@ func New(httpClient *http.Client, opts ...ClientOpt) (*Client, error) {
 		if err := opt(c); err != nil {
 			return nil, err
 		}
+	}
+
+	// if retryMax is set it will use the retryablehttp client.
+	if c.RetryConfig.RetryMax > 0 {
+		retryableClient := retryablehttp.NewClient()
+		retryableClient.RetryMax = c.RetryConfig.RetryMax
+
+		if c.RetryConfig.RetryWaitMin != nil {
+			retryableClient.RetryWaitMin = time.Duration(*c.RetryConfig.RetryWaitMin * float64(time.Second))
+		}
+		if c.RetryConfig.RetryWaitMax != nil {
+			retryableClient.RetryWaitMax = time.Duration(*c.RetryConfig.RetryWaitMax * float64(time.Second))
+		}
+
+		// if timeout is set, it is maintained before overwriting client with StandardClient()
+		retryableClient.HTTPClient.Timeout = c.client.Timeout
+
+		var source *oauth2.Transport
+		if _, ok := c.client.Transport.(*oauth2.Transport); ok {
+			source = c.client.Transport.(*oauth2.Transport)
+		}
+		c.client = retryableClient.StandardClient()
+		c.client.Transport = &oauth2.Transport{
+			Base:   c.client.Transport,
+			Source: source.Source,
+		}
+
 	}
 
 	return c, nil
@@ -306,6 +362,17 @@ func SetRequestHeaders(headers map[string]string) ClientOpt {
 func SetStaticRateLimit(rps float64) ClientOpt {
 	return func(c *Client) error {
 		c.rateLimiter = rate.NewLimiter(rate.Limit(rps), 1)
+		return nil
+	}
+}
+
+// WithRetryAndBackoffs sets retry values. Setting the RetryConfig.RetryMax value enables automatically retrying requests
+// that fail with 429 or 500-level response codes using the go-retryablehttp client
+func WithRetryAndBackoffs(retryConfig RetryConfig) ClientOpt {
+	return func(c *Client) error {
+		c.RetryConfig.RetryMax = retryConfig.RetryMax
+		c.RetryConfig.RetryWaitMax = retryConfig.RetryWaitMax
+		c.RetryConfig.RetryWaitMin = retryConfig.RetryWaitMin
 		return nil
 	}
 }
@@ -435,7 +502,7 @@ func (c *Client) Do(ctx context.Context, req *http.Request, v interface{}) (*Res
 		return response, err
 	}
 
-	if v != nil {
+	if resp.StatusCode != http.StatusNoContent && v != nil {
 		if w, ok := v.(io.Writer); ok {
 			_, err = io.Copy(w, resp.Body)
 			if err != nil {
@@ -504,8 +571,15 @@ func (r Rate) String() string {
 	return Stringify(r)
 }
 
+// PtrTo returns a pointer to the provided input.
+func PtrTo[T any](v T) *T {
+	return &v
+}
+
 // String is a helper routine that allocates a new string value
 // to store v and returns a pointer to it.
+//
+// Deprecated: Use PtrTo instead.
 func String(v string) *string {
 	p := new(string)
 	*p = v
@@ -515,6 +589,8 @@ func String(v string) *string {
 // Int is a helper routine that allocates a new int32 value
 // to store v and returns a pointer to it, but unlike Int32
 // its argument value is an int.
+//
+// Deprecated: Use PtrTo instead.
 func Int(v int) *int {
 	p := new(int)
 	*p = v
@@ -523,6 +599,8 @@ func Int(v int) *int {
 
 // Bool is a helper routine that allocates a new bool value
 // to store v and returns a pointer to it.
+//
+// Deprecated: Use PtrTo instead.
 func Bool(v bool) *bool {
 	p := new(bool)
 	*p = v
